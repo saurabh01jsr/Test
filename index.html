@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Focus Flow &mdash; Pomodoro Timer</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <main class="app">
+      <header class="app__header">
+        <p class="app__eyebrow">Focus Flow</p>
+        <h1 class="app__title">A mindful Pomodoro ritual</h1>
+        <p class="app__subtitle">
+          Stay present with an elegant timer that guides you through focused work
+          and restorative breaks.
+        </p>
+      </header>
+      <section class="timer-card" aria-live="polite">
+        <nav class="mode-selector" aria-label="Timer modes">
+          <button class="mode-button active" data-mode="pomodoro" aria-pressed="true">Focus</button>
+          <button class="mode-button" data-mode="short" aria-pressed="false">Pause</button>
+          <button class="mode-button" data-mode="long" aria-pressed="false">Restore</button>
+        </nav>
+        <div class="progress">
+          <svg class="progress__ring" viewBox="0 0 320 320" role="presentation">
+            <circle class="progress__ring-track" cx="160" cy="160" r="148" />
+            <circle
+              class="progress__ring-indicator"
+              cx="160"
+              cy="160"
+              r="148"
+            />
+          </svg>
+          <div class="time-display" id="time-display" aria-live="assertive">25:00</div>
+        </div>
+        <div class="controls" role="group" aria-label="Timer controls">
+          <button class="primary" id="start-stop">Start</button>
+          <button id="reset">Reset</button>
+        </div>
+        <dl class="session-details">
+          <div class="session-details__item">
+            <dt>Cycle</dt>
+            <dd id="cycle-count">1 of 4</dd>
+          </div>
+          <div class="session-details__item">
+            <dt>Mode</dt>
+            <dd id="mode-label">Focus</dd>
+          </div>
+          <div class="session-details__item">
+            <dt>Next</dt>
+            <dd id="next-label">Pause</dd>
+          </div>
+        </dl>
+      </section>
+      <footer class="app__footer">
+        <p>
+          Tip: After four focus sessions enjoy an extended break to let your mind
+          reset. Your progress is quietly saved if you keep the tab open.
+        </p>
+      </footer>
+    </main>
+    <script src="script.js"></script>
+  </body>
+</html>
