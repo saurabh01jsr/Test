@@ -1,0 +1,120 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Pomodoro Focus</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      href="https://fonts.googleapis.com/css2?family=Inter:wght@200;300;400;500;600;700&display=swap"
+      rel="stylesheet"
+    />
+    <link rel="stylesheet" href="style.css" />
+  </head>
+  <body>
+    <main class="page">
+      <header class="hero">
+        <div class="hero__glow"></div>
+        <div class="hero__content">
+          <h1>Pomodoro Focus</h1>
+          <p>Find your rhythm with intentional bursts of focus and mindful breaks.</p>
+        </div>
+      </header>
+
+      <section class="timer-card" aria-live="polite">
+        <div class="timer-card__header">
+          <div class="mode-switch" role="tablist" aria-label="Timer mode">
+            <button class="mode-switch__option" role="tab" data-mode="focus">
+              Focus
+            </button>
+            <button class="mode-switch__option" role="tab" data-mode="break">
+              Break
+            </button>
+          </div>
+          <div class="cycle-indicator" aria-hidden="true">
+            <span class="cycle-indicator__dot cycle-indicator__dot--active"></span>
+            <span class="cycle-indicator__dot"></span>
+            <span class="cycle-indicator__dot"></span>
+            <span class="cycle-indicator__dot"></span>
+          </div>
+        </div>
+        <div class="timer-card__display">
+          <div class="timer-card__clock" role="timer" aria-live="assertive">
+            <span class="timer-card__minutes">25</span>
+            <span class="timer-card__separator">:</span>
+            <span class="timer-card__seconds">00</span>
+          </div>
+          <svg class="timer-card__progress" viewBox="0 0 440 440" aria-hidden="true">
+            <circle class="timer-card__track" cx="220" cy="220" r="200"></circle>
+            <circle
+              class="timer-card__indicator"
+              cx="220"
+              cy="220"
+              r="200"
+            ></circle>
+          </svg>
+        </div>
+        <div class="timer-card__controls">
+          <button class="button button--primary" data-action="start">
+            Start
+          </button>
+          <button class="button" data-action="pause" disabled>
+            Pause
+          </button>
+          <button class="button" data-action="reset" disabled>
+            Reset
+          </button>
+        </div>
+        <div class="timer-card__settings">
+          <div class="slider-group">
+            <label for="focus-length">Focus</label>
+            <input
+              type="range"
+              min="15"
+              max="50"
+              value="25"
+              id="focus-length"
+            />
+            <span class="slider-value" data-for="focus-length">25 min</span>
+          </div>
+          <div class="slider-group">
+            <label for="break-length">Break</label>
+            <input
+              type="range"
+              min="3"
+              max="20"
+              value="5"
+              id="break-length"
+            />
+            <span class="slider-value" data-for="break-length">5 min</span>
+          </div>
+          <div class="slider-group">
+            <label for="cycle-count">Cycles</label>
+            <input type="range" min="1" max="4" value="4" id="cycle-count" />
+            <span class="slider-value" data-for="cycle-count">4 rounds</span>
+          </div>
+        </div>
+        <p class="timer-card__hint">
+          Tip: A Pomodoro cycle includes one focus session followed by a rejuvenating break.
+        </p>
+      </section>
+
+      <footer class="footer">
+        <p>
+          Crafted for mindful makers. Reset your intention, breathe deeply, and keep
+          showing up.
+        </p>
+      </footer>
+    </main>
+
+    <template id="toast-template">
+      <div class="toast" role="status" aria-live="polite">
+        <div class="toast__pulse"></div>
+        <span class="toast__message"></span>
+      </div>
+    </template>
+
+    <script src="script.js" type="module"></script>
+  </body>
+</html>
