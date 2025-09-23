@@ -1,0 +1,761 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>BlueTech Permit Watch</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+    <style>
+      body { font-family: 'Inter', sans-serif; }
+      pre { font-family: 'Inter', sans-serif; }
+    </style>
+  </head>
+  <body class="bg-slate-50">
+    <div id="root"></div>
+    <script type="module">
+      import React, { useMemo, useState, useEffect } from "https://esm.sh/react@18.2.0";
+      import { createRoot } from "https://esm.sh/react-dom@18.2.0/client";
+      import * as Lucide from "https://esm.sh/lucide-react@0.379.0?external=react,react-dom";
+      import {
+        BarChart,
+        Bar,
+        LineChart,
+        Line,
+        XAxis,
+        YAxis,
+        CartesianGrid,
+        Tooltip,
+        Legend,
+        ResponsiveContainer,
+        PieChart,
+        Pie
+      } from "https://esm.sh/recharts@2.12.6?external=react,react-dom";
+
+      const {
+        Download,
+        AlertTriangle,
+        TrendingUp,
+        ShieldAlert,
+        ClipboardList,
+        DollarSign
+      } = Lucide;
+
+      const STATES = ["CA","TX","FL","PA","OH","NY","IL","NC","WA","MI"];
+      const SECTORS = ["Municipal","Food & Beverage","Chemicals","Metals","Pulp & Paper","Power","Oil & Gas","Semiconductor","Textiles","General Industrial"];
+      const POLLUTANTS = ["Nutrients","Metals","PFAS","TSS/BOD","pH","FOG","Stormwater","Pretreatment","Process Control"];
+      const STATUSES = ["Compliant","Noncompliance","SNC"];
+      const QUARTERS = ["2024Q1","2024Q2","2024Q3","2024Q4","2025Q1","2025Q2"];
+
+      function rand(arr){ return arr[Math.floor(Math.random()*arr.length)]; }
+      function randInt(min,max){ return Math.floor(Math.random()*(max-min+1))+min; }
+
+      const DEFAULT_WEIGHTS = {
+        baseSNC: 50,
+        baseNC: 30,
+        durationPerQ: 5,
+        flowMultiplier: 0.15,
+        enforcementPerEvent: 2,
+        pollutantWeights: {
+          PFAS: 15,
+          Nutrients: 10,
+          Metals: 8,
+          "TSS/BOD": 6,
+          pH: 3,
+          FOG: 4,
+          Stormwater: 5,
+          Pretreatment: 6,
+          "Process Control": 7
+        }
+      };
+
+      const VENDORS = [
+        { id: 'v1', name: 'AquaNutrient Solutions', regions: ["CA","TX","FL","NC"], capabilities: ["Nutrients","Process Control"], sectors: ["Municipal","Food & Beverage","Power"], email: 'bd@aquanutrient.co' },
+        { id: 'v2', name: 'MetalGuard Systems', regions: ["PA","OH","IL","MI"], capabilities: ["Metals","Pretreatment"], sectors: ["Metals","Chemicals","Municipal"], email: 'leads@metalguard.io' },
+        { id: 'v3', name: 'PFAS Resolve', regions: ["CA","TX","NY","WA"], capabilities: ["PFAS"], sectors: ["Municipal","Power","Semiconductor"], email: 'hello@pfasresolve.com' },
+        { id: 'v4', name: 'ClarifyWorks', regions: ["FL","NC","PA","OH"], capabilities: ["TSS/BOD","FOG","Pretreatment"], sectors: ["Food & Beverage","Textiles","Municipal"], email: 'contact@clarifyworks.com' },
+        { id: 'v5', name: 'StormSense Partners', regions: ["WA","CA","NY"], capabilities: ["Stormwater","Process Control"], sectors: ["Municipal","General Industrial"], email: 'hi@stormsense.partners' }
+      ];
+
+      function randomDateWithin(days){
+        const now = new Date();
+        const past = new Date(now.getTime() - randInt(1, days)*24*3600*1000);
+        return past.toISOString().slice(0,10);
+      }
+
+      function seedFacilities(n=42){
+        const out=[];
+        for(let i=0;i<n;i++){
+          const state = rand(STATES);
+          const sector = rand(SECTORS);
+          const pollutant = rand(POLLUTANTS);
+          const status = rand(["Compliant","Noncompliance","SNC","Noncompliance","SNC"]);
+          const durationQ = status === 'Compliant' ? 0 : randInt(1,3);
+          const noncomplianceQuarters = status === 'Compliant' ? [] : Array.from({length: durationQ}, ()=>rand(QUARTERS));
+          const flow = +(Math.random()*15 + 0.2).toFixed(2);
+          const enforcementHistory = status === 'Compliant' ? 0 : randInt(0,3);
+          const penalty = status === 'Compliant' ? 0 : [0,0,0, randInt(5000,75000)][randInt(0,3)];
+          const name = `${state}-${sector.split(' ')[0]} Plant ${100+i}`;
+          const permit = `NPDES-${state}-${10000+i}`;
+          const lastViolation = status === 'Compliant' ? null : randomDateWithin(540);
+          out.push({
+            id: `f${i+1}`,
+            name,
+            permit,
+            state,
+            sector,
+            pollutant,
+            status,
+            durationQ,
+            noncomplianceQuarters: Array.from(new Set(noncomplianceQuarters)).sort(),
+            flowMGD: flow,
+            enforcementHistory,
+            lastViolationDate: lastViolation,
+            penaltyUSD: penalty
+          });
+        }
+        return out;
+      }
+
+      function computeScore(f, weights){
+        const w = weights || DEFAULT_WEIGHTS;
+        let score = 0;
+        if(f.status === 'SNC') score += w.baseSNC;
+        else if(f.status === 'Noncompliance') score += w.baseNC;
+
+        score += (w.pollutantWeights[f.pollutant] || 5);
+        score += f.durationQ * w.durationPerQ;
+        score += f.flowMGD * w.flowMultiplier;
+        score += (f.enforcementHistory||0) * w.enforcementPerEvent;
+
+        return Math.max(0, Math.min(100, Math.round(score)));
+      }
+
+      function urgency(score){
+        if(score >= 70) return {label:'High', color:'bg-rose-100 text-rose-700 border-rose-200'};
+        if(score >= 50) return {label:'Medium', color:'bg-amber-100 text-amber-700 border-amber-200'};
+        return {label:'Low', color:'bg-emerald-100 text-emerald-700 border-emerald-200'};
+      }
+
+      function matchVendors(facility){
+        const matches = VENDORS.map(v=>{
+          let m = 0;
+          if(v.regions.includes(facility.state)) m+=2;
+          if(v.capabilities.includes(facility.pollutant)) m+=3;
+          if(v.sectors.includes(facility.sector)) m+=1;
+          return { vendor: v, score: m };
+        }).filter(x=>x.score>0).sort((a,b)=>b.score-a.score);
+        return matches.slice(0,3);
+      }
+
+      function exportCSV(rows, filename='permit-watch-export.csv'){
+        if(!rows.length) return;
+        const headers = Object.keys(rows[0]||{});
+        const body = rows.map(r=>headers.map(h=>`"${String(r[h]??'').replaceAll('"','""')}"`).join(','));
+        const csv = [headers.join(','), ...body].join('\n');
+        const blob = new Blob([csv], {type:'text/csv;charset=utf-8;'});
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url; a.download = filename; a.click();
+        URL.revokeObjectURL(url);
+      }
+
+      const fmtUSD = n => n>=1000 ? `$${(n/1000).toFixed(1)}k` : `$${n}`;
+
+      function estProjectValue(f){
+        const base = f.status==='SNC' ? 80000 : f.status==='Noncompliance' ? 40000 : 0;
+        const flowFactor = Math.min(1.8, 0.6 + f.flowMGD/20);
+        const pollutantFactor = ({PFAS: 1.6, Nutrients:1.4, Metals:1.2, 'TSS/BOD':1.1, pH:0.9, FOG:1.0, Stormwater:1.0, Pretreatment:1.1, 'Process Control':1.2})[f.pollutant] || 1;
+        return Math.round(base * flowFactor * pollutantFactor);
+      }
+
+      function makeActionPlan(f){
+        const cat = f.pollutant;
+        const opts = [];
+        if(cat==='Nutrients'){
+          opts.push({name:'Optimize aeration + recycle ratios', time:'2–6 weeks', cost:'$10k–$50k', desc:'Process control tuning and DO setpoint optimization.'});
+          opts.push({name:'Add sidestream treatment (e.g., deammonification)', time:'3–6 months', cost:'$150k–$500k', desc:'Reduce ammonia load and stabilize biology.'});
+        } else if(cat==='PFAS'){
+          opts.push({name:'GAC or IX polish', time:'6–12 weeks', cost:'$100k–$350k', desc:'Point-source adsorption with breakthrough monitoring.'});
+          opts.push({name:'Concentrate + destruction pilot', time:'3–9 months', cost:'$250k–$1.2M', desc:'EDBM/FO to shrink brine; evaluate EO/UV-AOP for destruction.'});
+        } else if(cat==='Metals'){
+          opts.push({name:'pH/ORP windowing + coagulant aid', time:'2–8 weeks', cost:'$20k–$80k', desc:'Improve precipitation and settling.'});
+          opts.push({name:'High-rate clarification + filter', time:'2–5 months', cost:'$120k–$400k', desc:'Stabilize effluent and handle flow swings.'});
+        } else if(cat==='TSS/BOD'){
+          opts.push({name:'MLSS/FOG control + skimming', time:'1–4 weeks', cost:'$5k–$25k', desc:'Operational hygiene and skimming additions.'});
+          opts.push({name:'DAF retrofit or media filter', time:'2–4 months', cost:'$80k–$300k', desc:'Capture solids and organics spikes.'});
+        } else if(cat==='pH'){
+          opts.push({name:'Acid/caustic feed control loop', time:'1–3 weeks', cost:'$5k–$20k', desc:'Tighten instrumentation and dosing control.'});
+        } else if(cat==='FOG'){
+          opts.push({name:'Grease trap maintenance + enzymes', time:'1–3 weeks', cost:'$2k–$10k', desc:'Reduce FOG carryover.'});
+          opts.push({name:'DAF with chemical program', time:'1–3 months', cost:'$70k–$250k', desc:'Clarify and capture fats/oils/grease.'});
+        } else if(cat==='Stormwater'){
+          opts.push({name:'Source control + inlet protection', time:'1–4 weeks', cost:'$5k–$25k', desc:'Reduce solids and oils entering system.'});
+          opts.push({name:'Vault filter or biofilter', time:'1–3 months', cost:'$60k–$220k', desc:'Downstream polishing for TSS/metals.'});
+        } else if(cat==='Pretreatment' || cat==='Process Control'){
+          opts.push({name:'Program audit + SOP refresh', time:'2–6 weeks', cost:'$10k–$40k', desc:'Training, SOPs, monitoring plan.'});
+          opts.push({name:'Instrumentation + analytics', time:'1–3 months', cost:'$50k–$180k', desc:'Sensors and dashboards to stabilize ops.'});
+        }
+        return { options: opts };
+      }
+
+      function minimalRow(){
+        return f=>({
+          name: f.name,
+          permit: f.permit,
+          state: f.state,
+          sector: f.sector,
+          pollutant: f.pollutant,
+          status: f.status,
+          score: f.score,
+          flowMGD: f.flowMGD,
+          durationQuarters: f.durationQ,
+          enforcementEvents: f.enforcementHistory,
+          lastViolationDate: f.lastViolationDate,
+          penaltiesUSD: f.penaltyUSD,
+          noncomplianceQuarters: (f.noncomplianceQuarters||[]).join('|'),
+          estProjectValueUSD: estProjectValue(f)
+        });
+      }
+
+      function Th({children, center}){
+        return React.createElement('th',{className:`text-left text-xs font-medium px-3 py-2 ${center?'text-center':''}`},children);
+      }
+      function Td({children, center}){
+        return React.createElement('td',{className:`px-3 py-2 align-middle ${center?'text-center':''}`},children);
+      }
+      function Card({title, subtitle, children}){
+        return React.createElement('div',{className:'rounded-2xl border border-slate-200 bg-white p-4'},
+          React.createElement('div',{className:'mb-2'},
+            React.createElement('div',{className:'font-semibold'},title),
+            subtitle && React.createElement('div',{className:'text-xs text-slate-500'},subtitle)
+          ),
+          children
+        );
+      }
+      function KPI({icon:Icon,label,value}){
+        return React.createElement('div',{className:'rounded-2xl border border-slate-200 bg-white p-4 flex items-center gap-3'},
+          React.createElement('div',{className:'p-2 rounded-xl bg-slate-100 border border-slate-200'},
+            React.createElement(Icon,{className:'w-5 h-5 text-slate-700'})
+          ),
+          React.createElement('div',null,
+            React.createElement('div',{className:'text-xs text-slate-500'},label),
+            React.createElement('div',{className:'text-lg font-semibold'},value)
+          )
+        );
+      }
+      function LabeledSlider({label,value,onChange,min=0,max=100,step=1}){
+        return React.createElement('div',{className:'mb-2'},
+          React.createElement('div',{className:'flex items-center justify-between text-sm'},
+            React.createElement('span',null,label),
+            React.createElement('span',{className:'text-slate-600'},value)
+          ),
+          React.createElement('input',{type:'range',min,max,step,value,onChange:e=>onChange(Number(e.target.value)),className:'w-full'})
+        );
+      }
+      function PriceCard({title,price,bullets}){
+        return React.createElement('div',{className:'rounded-2xl border border-slate-200 p-4'},
+          React.createElement('div',{className:'font-semibold'},title),
+          React.createElement('div',{className:'text-sm text-slate-600'},price),
+          React.createElement('ul',{className:'list-disc ml-5 text-sm mt-1'},
+            bullets.map((b,i)=>React.createElement('li',{key:i},b))
+          )
+        );
+      }
+      function Select({label,value,onChange,options}){
+        return React.createElement('div',null,
+          React.createElement('label',{className:'text-xs text-slate-500'},label),
+          React.createElement('select',{className:'w-full px-3 py-2 rounded-xl border border-slate-200 bg-white',value,onChange:e=>onChange(e.target.value)},
+            options.map(opt=>React.createElement('option',{key:opt},opt))
+          )
+        );
+      }
+      function FacilitiesView({rows,onSelect}){
+        return React.createElement('div',{className:'space-y-3'},
+          React.createElement('p',{className:'text-sm text-slate-600'},'Sorted by urgency. Click view to open a diagnostic with suggested steps and vendor matches.'),
+          React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-3'},
+            rows.slice().sort((a,b)=>b.score-a.score).map(f=>{
+              const u = urgency(f.score);
+              const matches = matchVendors(f);
+              return React.createElement('div',{key:f.id,className:'rounded-2xl border border-slate-200 bg-white p-4'},
+                React.createElement('div',{className:'flex items-center justify-between'},
+                  React.createElement('div',null,
+                    React.createElement('div',{className:'font-semibold'},f.name),
+                    React.createElement('div',{className:'text-xs text-slate-500'},`${f.permit} • ${f.state} • ${f.sector}`)
+                  ),
+                  React.createElement('span',{className:`inline-flex items-center px-2 py-0.5 rounded-lg border text-xs ${u.color}`},`${u.label} • ${f.score}`)
+                ),
+                React.createElement('div',{className:'mt-2 text-sm'},
+                  React.createElement('div',{className:'flex items-center gap-2'},
+                    React.createElement(AlertTriangle,{className:'w-4 h-4 text-amber-600'}),
+                    React.createElement('span',null,`${f.status} – ${f.pollutant}`)
+                  ),
+                  React.createElement('div',{className:'text-slate-500'},`Duration: ${f.durationQ||0} qtrs • Flow: ${f.flowMGD} MGD • Enforcement events: ${f.enforcementHistory}`),
+                  React.createElement('div',{className:'text-slate-500'},`Last violation: ${f.lastViolationDate || '—'} • Penalties: ${fmtUSD(f.penaltyUSD)}`),
+                  React.createElement('div',{className:'mt-2'},
+                    React.createElement('div',{className:'text-xs font-medium text-slate-600 mb-1'},'Top vendor matches'),
+                    React.createElement('ul',{className:'text-sm list-disc ml-5'},
+                      matches.map(m=>React.createElement('li',{key:m.vendor.id},
+                        React.createElement('span',{className:'font-medium'},m.vendor.name),
+                        ` – ${m.vendor.capabilities.join('/')} • Regions: ${m.vendor.regions.join(', ')}`
+                      ))
+                    )
+                  )
+                ),
+                React.createElement('div',{className:'mt-3 flex gap-2'},
+                  React.createElement('button',{className:'flex-1 px-3 py-2 rounded-xl bg-slate-900 text-white hover:bg-slate-800',onClick:()=>onSelect(f)},'View diagnostic'),
+                  React.createElement('button',{className:'px-3 py-2 rounded-xl border border-slate-200 hover:bg-slate-100'},'Warm intro')
+                )
+              );
+            })
+          )
+        );
+      }
+
+      function VendorsView({rows}){
+        const leads = rows.filter(r=>r.status!=='Compliant').map(f=>({
+          name: f.name, state: f.state, sector: f.sector, pollutant: f.pollutant, flowMGD: f.flowMGD, score: f.score,
+          lastViolationDate: f.lastViolationDate, permit: f.permit
+        })).sort((a,b)=>b.score-a.score);
+
+        return React.createElement('div',{className:'space-y-4'},
+          React.createElement('div',{className:'rounded-2xl border border-slate-200 bg-white p-4'},
+            React.createElement('div',{className:'flex items-center justify-between'},
+              React.createElement('div',null,
+                React.createElement('div',{className:'text-lg font-semibold'},'Vendor lead feed'),
+                React.createElement('div',{className:'text-sm text-slate-600'},'Filtered and scored for fit and timing.')
+              ),
+              React.createElement('div',{className:'flex gap-2'},
+                React.createElement('button',{onClick:()=>exportCSV(leads,'vendor-leads.csv'),className:'px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100 inline-flex items-center gap-2'},
+                  React.createElement(Download,{className:'w-4 h-4'}),'Export'
+                )
+              )
+            ),
+            React.createElement('div',{className:'overflow-x-auto mt-3'},
+              React.createElement('table',{className:'min-w-full text-sm'},
+                React.createElement('thead',{className:'bg-slate-50 text-slate-600'},
+                  React.createElement('tr',null,
+                    React.createElement(Th,null,'Facility'),
+                    React.createElement(Th,{center:true},'State'),
+                    React.createElement(Th,null,'Sector'),
+                    React.createElement(Th,null,'Pollutant'),
+                    React.createElement(Th,{center:true},'Flow'),
+                    React.createElement(Th,{center:true},'Score'),
+                    React.createElement(Th,null,'Last violation'),
+                    React.createElement(Th,null,'Permit')
+                  )
+                ),
+                React.createElement('tbody',null,
+                  leads.map((l,idx)=>React.createElement('tr',{key:idx,className:'border-t border-slate-100 hover:bg-slate-50'},
+                    React.createElement(Td,null,l.name),
+                    React.createElement(Td,{center:true},l.state),
+                    React.createElement(Td,null,l.sector),
+                    React.createElement(Td,null,l.pollutant),
+                    React.createElement(Td,{center:true},l.flowMGD),
+                    React.createElement(Td,{center:true},l.score),
+                    React.createElement(Td,null,l.lastViolationDate || '—'),
+                    React.createElement(Td,null,l.permit)
+                  ))
+                )
+              )
+            )
+          ),
+          React.createElement('div',{className:'rounded-2xl border border-slate-200 bg-white p-4'},
+            React.createElement('div',{className:'text-lg font-semibold mb-1'},'Subscription options (draft)'),
+            React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-3 gap-3'},
+              React.createElement(PriceCard,{title:'Regional',price:'$5k–$15k / region / yr',bullets:['Territory filters','CRM-ready feed','Quarterly pipeline review']}),
+              React.createElement(PriceCard,{title:'All-US',price:'$25k–$40k / yr',bullets:['Full feed','Custom scoring','Quarterly review + intros']}),
+              React.createElement(PriceCard,{title:'Warm intros',price:'Per-intro or success fee',bullets:['Transparent terms','COI guardrails','Fast scheduling']})
+            )
+          )
+        );
+      }
+
+      function ScoringView({weights,setWeights}){
+        const [local,setLocal] = useState(weights);
+        useEffect(()=>setLocal(weights),[weights]);
+
+        function update(path,value){
+          setLocal(prev=>{
+            const next = JSON.parse(JSON.stringify(prev));
+            const parts = path.split('.');
+            let ref = next;
+            for(let i=0;i<parts.length-1;i++) ref = ref[parts[i]];
+            ref[parts[parts.length-1]] = value;
+            return next;
+          });
+        }
+
+        return React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-3 gap-4'},
+          React.createElement(Card,{title:'Base weights',subtitle:'Tune to your risk model'},
+            React.createElement(LabeledSlider,{label:'Base SNC',value:local.baseSNC,min:30,max:70,step:1,onChange:v=>update('baseSNC',v)}),
+            React.createElement(LabeledSlider,{label:'Base Noncompliance',value:local.baseNC,min:15,max:50,step:1,onChange:v=>update('baseNC',v)}),
+            React.createElement(LabeledSlider,{label:'Per-quarter duration',value:local.durationPerQ,min:1,max:10,step:1,onChange:v=>update('durationPerQ',v)}),
+            React.createElement(LabeledSlider,{label:'Flow multiplier (per MGD)',value:local.flowMultiplier,min:0,max:1,step:0.05,onChange:v=>update('flowMultiplier',v)}),
+            React.createElement(LabeledSlider,{label:'Enforcement per event',value:local.enforcementPerEvent,min:0,max:6,step:0.5,onChange:v=>update('enforcementPerEvent',v)}),
+            React.createElement('div',{className:'mt-3 flex gap-2'},
+              React.createElement('button',{onClick:()=>setWeights(local),className:'px-3 py-2 rounded-xl bg-slate-900 text-white'},'Apply'),
+              React.createElement('button',{onClick:()=>setLocal(DEFAULT_WEIGHTS),className:'px-3 py-2 rounded-xl border border-slate-200'},'Reset')
+            )
+          ),
+          React.createElement(Card,{title:'Pollutant weights',subtitle:'Influence of pollutant class'},
+            Object.keys(local.pollutantWeights).map(k=>React.createElement(LabeledSlider,{key:k,label:k,value:local.pollutantWeights[k],min:0,max:20,step:1,onChange:v=>update(`pollutantWeights.${k}`,v)}))
+          ),
+          React.createElement(Card,{title:'Notes',subtitle:'Scoring transparency'},
+            React.createElement('ul',{className:'list-disc ml-5 text-sm text-slate-700'},
+              React.createElement('li',null,'Scores are 0–100, then bucketed into High / Medium / Low urgency.'),
+              React.createElement('li',null,'Weights are visible to both operators and vendors to maintain neutrality.'),
+              React.createElement('li',null,'Facility-level context and references should be included in production.')
+            )
+          )
+        );
+      }
+
+      function PricingView(){
+        return React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-2 gap-4'},
+          React.createElement(Card,{title:'For facilities',subtitle:'Simple, predictable pricing'},
+            React.createElement(PriceCard,{title:'Free',price:'$0',bullets:['Email alerts','Issue summary']}),
+            React.createElement(PriceCard,{title:'Pro',price:'$3k–$5k per site / yr',bullets:['Quarterly diagnostics','Office hours','Template SOPs','Vendor short list']}),
+            React.createElement(PriceCard,{title:'Advisory add-ons',price:'Fixed-fee',bullets:['Site assessment','RFP support']})
+          ),
+          React.createElement(Card,{title:'For solution providers',subtitle:'Pay for timed, qualified demand'},
+            React.createElement(PriceCard,{title:'Regional',price:'$5k–$15k / region / yr',bullets:['Targeted leads by sector/pollutant','CRM-ready feed','Territory filters']}),
+            React.createElement(PriceCard,{title:'All-US',price:'$25k–$40k / yr',bullets:['Full feed','Custom scoring','Quarterly pipeline review']}),
+            React.createElement(PriceCard,{title:'Warm intro',price:'Per intro or small success fee',bullets:['Strict transparency','COI guardrails']})
+          )
+        );
+      }
+
+      function PilotView(){
+        return React.createElement('div',{className:'space-y-3'},
+          React.createElement(Card,{title:'Pilot plan (90 days)',subtitle:'Start focused, show outcomes'},
+            React.createElement('ol',{className:'list-decimal ml-5 text-sm text-slate-700 space-y-1'},
+              React.createElement('li',null,'Select 3 states with high enforcement activity and dense install base.'),
+              React.createElement('li',null,'Recruit 10 charter vendors across solution categories.'),
+              React.createElement('li',null,'Run weekly ingest + scoring refresh; publish case studies monthly.'),
+              React.createElement('li',null,'Measure time-to-corrective plan, repeat violation reduction, vendor ROI.')
+            )
+          ),
+          React.createElement(Card,{title:'Success metrics',subtitle:'What good looks like'},
+            React.createElement('ul',{className:'list-disc ml-5 text-sm text-slate-700 space-y-1'},
+              React.createElement('li',null,'Time from alert to corrective plan.'),
+              React.createElement('li',null,'Share of alerts converting to engagements.'),
+              React.createElement('li',null,'Reduction in repeat violations for participants.'),
+              React.createElement('li',null,'Revenue per vendor subscription and win rate.')
+            )
+          )
+        );
+      }
+
+      function OutreachView(){
+        return React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-2 gap-4'},
+          React.createElement(Card,{title:'Email to facility operator',subtitle:'Subject: Your NPDES status and a quick path to resolution'},
+            React.createElement('pre',{className:'text-xs whitespace-pre-wrap'},`Hi [Name],\nOur weekly scan shows [Facility] moved into [noncompliance/SNC] for [pollutant] in [Qx YYYY]. Typical fixes at plants of your size are [example 1] or [example 2].\nIf helpful, we can share a 2-page diagnostic with options, time and cost ranges, and references. No obligation.\nWould you like us to send that summary?\n\nBest,\nBlueTech Permit Watch`)
+          ),
+          React.createElement(Card,{title:'Email to vendor BD manager',subtitle:'Subject: Timed opportunities in [State] for [nutrients/metals/PFAS]'},
+            React.createElement('pre',{className:'text-xs whitespace-pre-wrap'},`Hi [Name],\nWe’re tracking [X] facilities in [territory] with recent [pollutant] violations and flow ranges that match your install base. Two look like strong fits for [your solution].\nWe can enable a filtered feed into your CRM and set warm intros if you’re interested. Quick call?\n\nBest,\nBlueTech Permit Watch`)
+          )
+        );
+      }
+
+      function MethodologyView(){
+        return React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-2 gap-4'},
+          React.createElement(Card,{title:'Guardrails & risks',subtitle:'Stay factual, neutral, transparent'},
+            React.createElement('ul',{className:'list-disc ml-5 text-sm text-slate-700 space-y-1'},
+              React.createElement('li',null,React.createElement('span',{className:'font-medium'},'Accuracy:'),' show source definitions and citations in production; stick to facts and dates.'),
+              React.createElement('li',null,React.createElement('span',{className:'font-medium'},'Compliance:'),' opt-out for facilities; respect contact preferences; no legal advice.'),
+              React.createElement('li',null,React.createElement('span',{className:'font-medium'},'Independence:'),' disclose vendor relationships; present multiple options.')
+            )
+          ),
+          React.createElement(Card,{title:'Roadmap',subtitle:'From MVP to platform'},
+            React.createElement('ul',{className:'list-disc ml-5 text-sm text-slate-700 space-y-1'},
+              React.createElement('li',null,'Data: EPA ECHO/NPDES + state portals; normalize at facility/permit level.'),
+              React.createElement('li',null,'Identity: facility operator directory with contact preference management.'),
+              React.createElement('li',null,'Delivery: email + webhook to CRMs (Salesforce, HubSpot, Pipedrive).'),
+              React.createElement('li',null,'Evidence: playbooks per pollutant/sector with cost/time bands and references.')
+            )
+          )
+        );
+      }
+
+      function DetailDrawer({facility,onClose}){
+        const matches = matchVendors(facility);
+        const plan = makeActionPlan(facility);
+        const u = urgency(facility.score);
+
+        return React.createElement('div',{className:'fixed inset-0 z-30 flex'},
+          React.createElement('div',{className:'flex-1 bg-black/30',onClick:onClose}),
+          React.createElement('div',{className:'w-full max-w-xl h-full bg-white border-l border-slate-200 p-5 overflow-y-auto'},
+            React.createElement('div',{className:'flex items-center justify-between'},
+              React.createElement('div',null,
+                React.createElement('div',{className:'text-lg font-semibold'},facility.name),
+                React.createElement('div',{className:'text-xs text-slate-500'},`${facility.permit} • ${facility.state} • ${facility.sector}`)
+              ),
+              React.createElement('button',{onClick:onClose,className:'px-3 py-1.5 rounded-xl border border-slate-200'},'Close')
+            ),
+            React.createElement('div',{className:'mt-3 flex items-center gap-2'},
+              React.createElement('span',{className:`inline-flex items-center px-2 py-0.5 rounded-lg border text-xs ${u.color}`},`${u.label} • ${facility.score}`),
+              React.createElement('span',{className:'text-xs text-slate-500'},`Status: ${facility.status} • Pollutant: ${facility.pollutant} • Flow: ${facility.flowMGD} MGD`)
+            ),
+            React.createElement('div',{className:'mt-4 space-y-4'},
+              React.createElement(Card,{title:'Diagnostic summary',subtitle:'Facts we see'},
+                React.createElement('ul',{className:'list-disc ml-5 text-sm'},
+                  React.createElement('li',null,`Noncompliance quarters: ${facility.noncomplianceQuarters?.join(', ') || '—'}`),
+                  React.createElement('li',null,`Enforcement events: ${facility.enforcementHistory} • Penalties to date: ${fmtUSD(facility.penaltyUSD)}`),
+                  React.createElement('li',null,`Last violation: ${facility.lastViolationDate || '—'}`)
+                )
+              ),
+              React.createElement(Card,{title:'Likely options',subtitle:'Fastest path back to compliance'},
+                React.createElement('ul',{className:'list-disc ml-5 text-sm space-y-1'},
+                  plan.options.map((o,idx)=>React.createElement('li',{key:idx},
+                    React.createElement('span',{className:'font-medium'},o.name),
+                    ` – ${o.desc} `,
+                    React.createElement('span',{className:'text-slate-500'},`(${o.time} • ${o.cost})`)
+                  ))
+                )
+              ),
+              React.createElement(Card,{title:'Vendor short list',subtitle:'3 matches with references'},
+                React.createElement('ul',{className:'list-disc ml-5 text-sm'},
+                  matches.map(m=>React.createElement('li',{key:m.vendor.id},
+                    React.createElement('span',{className:'font-medium'},m.vendor.name),
+                    ` – ${m.vendor.capabilities.join('/')} • Regions: ${m.vendor.regions.join(', ')} • `,
+                    React.createElement('a',{className:'text-indigo-600',href:`mailto:${m.vendor.email}`},m.vendor.email)
+                  ))
+                ),
+                React.createElement('div',{className:'mt-3 flex gap-2'},
+                  React.createElement('button',{className:'px-3 py-2 rounded-xl border border-slate-200'},'Send advisory alert'),
+                  React.createElement('button',{className:'px-3 py-2 rounded-xl bg-slate-900 text-white'},'Warm intro')
+                )
+              )
+            )
+          )
+        );
+      }
+
+      function DashboardView({kpis, timeSeries, byPollutant, byState, filtered, onSelect, persona}){
+        return React.createElement('div',{className:'space-y-6'},
+          React.createElement('div',{className:'grid grid-cols-2 md:grid-cols-5 gap-3'},
+            React.createElement(KPI,{icon:ClipboardList,label:'Facilities tracked',value:kpis.tracked}),
+            React.createElement(KPI,{icon:AlertTriangle,label:'In noncompliance',value:kpis.issues}),
+            React.createElement(KPI,{icon:ShieldAlert,label:'SNC',value:kpis.snc}),
+            React.createElement(KPI,{icon:TrendingUp,label:'Avg duration (qtrs)',value:kpis.avgDuration}),
+            React.createElement(KPI,{icon:DollarSign,label:'Est. project value',value:`$${(kpis.estValue/1e6).toFixed(2)}M`})
+          ),
+          React.createElement('div',{className:'grid grid-cols-1 md:grid-cols-3 gap-4'},
+            React.createElement(Card,{title:'Violations over time',subtitle:'Counts by quarter'},
+              React.createElement(ResponsiveContainer,{width:'100%',height:220},
+                React.createElement(LineChart,{data:timeSeries},
+                  React.createElement(CartesianGrid,{strokeDasharray:'3 3'}),
+                  React.createElement(XAxis,{dataKey:'quarter'}),
+                  React.createElement(YAxis,{allowDecimals:false}),
+                  React.createElement(Tooltip,null),
+                  React.createElement(Legend,null),
+                  React.createElement(Line,{type:'monotone',dataKey:'cases',name:'Cases',stroke:'#0f172a',strokeWidth:2})
+                )
+              )
+            ),
+            React.createElement(Card,{title:'By pollutant',subtitle:'Current issue distribution'},
+              React.createElement(ResponsiveContainer,{width:'100%',height:220},
+                React.createElement(BarChart,{data:byPollutant},
+                  React.createElement(CartesianGrid,{strokeDasharray:'3 3'}),
+                  React.createElement(XAxis,{dataKey:'pollutant',angle:-15,textAnchor:'end',height:60}),
+                  React.createElement(YAxis,{allowDecimals:false}),
+                  React.createElement(Tooltip,null),
+                  React.createElement(Bar,{dataKey:'cases',fill:'#1e293b'})
+                )
+              )
+            ),
+            React.createElement(Card,{title:'By state',subtitle:'Current issue distribution'},
+              React.createElement(ResponsiveContainer,{width:'100%',height:220},
+                React.createElement(BarChart,{data:byState},
+                  React.createElement(CartesianGrid,{strokeDasharray:'3 3'}),
+                  React.createElement(XAxis,{dataKey:'state'}),
+                  React.createElement(YAxis,{allowDecimals:false}),
+                  React.createElement(Tooltip,null),
+                  React.createElement(Bar,{dataKey:'cases',fill:'#334155'})
+                )
+              )
+            )
+          ),
+          React.createElement('div',{className:'flex items-center justify-between mt-4'},
+            React.createElement('h3',{className:'text-lg font-semibold'}, persona==='Operator' ? 'Compliance Alerts' : 'Qualified Leads'),
+            React.createElement('span',{className:'text-sm text-slate-500'},`${filtered.length} items`)
+          ),
+          React.createElement('div',{className:'overflow-x-auto rounded-2xl border border-slate-200 bg-white'},
+            React.createElement('table',{className:'min-w-full text-sm'},
+              React.createElement('thead',{className:'bg-slate-50 text-slate-600'},
+                React.createElement('tr',null,
+                  React.createElement(Th,null,'Facility'),
+                  React.createElement(Th,null,'Permit'),
+                  React.createElement(Th,{center:true},'State'),
+                  React.createElement(Th,null,'Sector'),
+                  React.createElement(Th,null,'Pollutant'),
+                  React.createElement(Th,{center:true},'Status'),
+                  React.createElement(Th,{center:true},'Score'),
+                  React.createElement(Th,{center:true},'Flow (MGD)'),
+                  React.createElement(Th,null,'Last violation'),
+                  React.createElement(Th,{center:true},'Actions')
+                )
+              ),
+              React.createElement('tbody',null,
+                filtered.map(f=>{
+                  const u = urgency(f.score);
+                  return React.createElement('tr',{key:f.id,className:'border-t border-slate-100 hover:bg-slate-50'},
+                    React.createElement(Td,null,
+                      React.createElement('div',{className:'font-medium'},f.name),
+                      React.createElement('div',{className:'text-xs text-slate-500'},f.noncomplianceQuarters?.join(', ') || '—')
+                    ),
+                    React.createElement(Td,null,f.permit),
+                    React.createElement(Td,{center:true},f.state),
+                    React.createElement(Td,null,f.sector),
+                    React.createElement(Td,null,f.pollutant),
+                    React.createElement(Td,{center:true},
+                      React.createElement('span',{className:`inline-flex items-center px-2 py-0.5 rounded-lg border text-xs ${f.status==='Compliant'?'bg-emerald-50 text-emerald-700 border-emerald-200': f.status==='SNC'?'bg-rose-50 text-rose-700 border-rose-200':'bg-amber-50 text-amber-700 border-amber-200'}`},f.status)
+                    ),
+                    React.createElement(Td,{center:true},
+                      React.createElement('div',{className:'inline-flex items-center gap-2'},
+                        React.createElement('span',{className:`inline-flex items-center px-2 py-0.5 rounded-lg border text-xs ${u.color}`},u.label),
+                        React.createElement('span',{className:'text-slate-600'},f.score)
+                      )
+                    ),
+                    React.createElement(Td,{center:true},f.flowMGD),
+                    React.createElement(Td,null,f.lastViolationDate || '—'),
+                    React.createElement(Td,{center:true},
+                      React.createElement('div',{className:'flex items-center justify-center gap-2'},
+                        React.createElement('button',{className:'px-2 py-1 rounded-lg bg-slate-900 text-white hover:bg-slate-800',onClick:()=>onSelect(f)},'View'),
+                        React.createElement('button',{className:'px-2 py-1 rounded-lg border border-slate-200 hover:bg-slate-100'},'Alert')
+                      )
+                    )
+                  );
+                })
+              )
+            )
+          )
+        );
+      }
+
+      function VendorsPlaceholder(){
+        return React.createElement('div',null);
+      }
+
+      function PermitWatchApp(){
+        const [data, setData] = useState([]);
+        const [weights, setWeights] = useState(DEFAULT_WEIGHTS);
+        const [q, setQ] = useState('');
+        const [stateFilt, setStateFilt] = useState('All');
+        const [sectorFilt, setSectorFilt] = useState('All');
+        const [pollutantFilt, setPollutantFilt] = useState('All');
+        const [statusFilt, setStatusFilt] = useState('Issues');
+        const [quarterFilt, setQuarterFilt] = useState('All');
+        const [view, setView] = useState('Dashboard');
+        const [persona, setPersona] = useState('Operator');
+        const [selected, setSelected] = useState(null);
+
+        useEffect(()=>{
+          const seeded = seedFacilities(48).map(f=>({ ...f, score: computeScore(f, DEFAULT_WEIGHTS)}));
+          setData(seeded);
+        },[]);
+
+        const filtered = useMemo(()=>{
+          return data.filter(f=>{
+            if(statusFilt==='Issues' && f.status==='Compliant') return false;
+            if(statusFilt!=='All' && statusFilt!=='Issues' && f.status!==statusFilt) return false;
+            if(stateFilt!=='All' && f.state!==stateFilt) return false;
+            if(sectorFilt!=='All' && f.sector!==sectorFilt) return false;
+            if(pollutantFilt!=='All' && f.pollutant!==pollutantFilt) return false;
+            if(quarterFilt!=='All' && !(f.noncomplianceQuarters||[]).includes(quarterFilt)) return false;
+            if(q && !(`${f.name} ${f.permit}`.toLowerCase().includes(q.toLowerCase()))) return false;
+            return true;
+          }).map(f=>({...f, score: computeScore(f, weights)}));
+        },[data, q, stateFilt, sectorFilt, pollutantFilt, statusFilt, quarterFilt, weights]);
+
+        const kpis = useMemo(()=>{
+          const tracked = data.length;
+          const issues = data.filter(f=>f.status!=='Compliant').length;
+          const snc = data.filter(f=>f.status==='SNC').length;
+          const active = data.filter(f=>f.durationQ>0);
+          const avgDuration = (active.reduce((a,b)=>a+b.durationQ,0) / Math.max(1, active.length)).toFixed(1);
+          const estValue = data.filter(f=>f.status!=='Compliant').reduce((sum,f)=> sum + estProjectValue(f), 0);
+          return { tracked, issues, snc, avgDuration, estValue };
+        },[data]);
+
+        const timeSeries = useMemo(()=>{
+          const counts = {};
+          QUARTERS.forEach(q=>counts[q]=0);
+          data.forEach(f=>{
+            (f.noncomplianceQuarters||[]).forEach(q=>{ counts[q] = (counts[q]||0)+1; });
+          });
+          return QUARTERS.map(q=>({ quarter:q, cases: counts[q]||0 }));
+        },[data]);
+
+        const byPollutant = useMemo(()=>{
+          const m = {};
+          POLLUTANTS.forEach(p=>m[p]=0);
+          data.forEach(f=>{ if(f.status!=='Compliant') m[f.pollutant] = (m[f.pollutant]||0)+1; });
+          return Object.entries(m).map(([k,v])=>({ pollutant:k, cases:v }));
+        },[data]);
+
+        const byState = useMemo(()=>{
+          const m = {};
+          STATES.forEach(s=>m[s]=0);
+          data.forEach(f=>{ if(f.status!=='Compliant') m[f.state] = (m[f.state]||0)+1; });
+          return Object.entries(m).map(([k,v])=>({ state:k, cases:v }));
+        },[data]);
+
+        return React.createElement('div',{className:'min-h-screen bg-slate-50 text-slate-900'},
+          React.createElement('header',{className:'sticky top-0 z-20 backdrop-blur bg-white/80 border-b border-slate-200'},
+            React.createElement('div',{className:'max-w-7xl mx-auto px-4 py-3 flex items-center gap-3'},
+              React.createElement(Lucide.ShieldAlert,{className:'w-6 h-6 text-indigo-600'}),
+              React.createElement('h1',{className:'text-xl font-semibold'},'BlueTech Permit Watch'),
+              React.createElement('div',{className:'ml-auto flex items-center gap-2'},
+                React.createElement('select',{className:'px-3 py-1.5 rounded-xl border border-slate-200 bg-white',value:persona,onChange:e=>setPersona(e.target.value)},
+                  React.createElement('option',null,'Operator'),
+                  React.createElement('option',null,'Vendor')
+                ),
+                React.createElement('nav',{className:'hidden md:flex gap-1'},
+                  ['Dashboard','Facilities','Vendors','Scoring','Pricing','Pilot','Outreach','Methodology'].map(tab=>
+                    React.createElement('button',{key:tab,onClick:()=>setView(tab),className:`px-3 py-1.5 rounded-xl text-sm border ${view===tab? 'bg-slate-900 text-white border-slate-900':'bg-white border-slate-200 hover:bg-slate-100'}`},tab)
+                  )
+                )
+              )
+            )
+          ),
+          React.createElement('main',{className:'max-w-7xl mx-auto px-4 py-6'},
+            React.createElement('section',{className:'mb-6 grid grid-cols-2 md:grid-cols-6 gap-2 items-end'},
+              React.createElement('div',{className:'col-span-2 md:col-span-2'},
+                React.createElement('label',{className:'text-xs text-slate-500'},'Search'),
+                React.createElement('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Facility or permit',className:'w-full px-3 py-2 rounded-xl border border-slate-200 bg-white'})
+              ),
+              React.createElement(Select,{label:'State',value:stateFilt,onChange:setStateFilt,options:['All',...STATES]}),
+              React.createElement(Select,{label:'Sector',value:sectorFilt,onChange:setSectorFilt,options:['All',...SECTORS]}),
+              React.createElement(Select,{label:'Pollutant',value:pollutantFilt,onChange:setPollutantFilt,options:['All',...POLLUTANTS]}),
+              React.createElement(Select,{label:'Status',value:statusFilt,onChange:setStatusFilt,options:['Issues','All',...STATUSES]}),
+              React.createElement(Select,{label:'Quarter',value:quarterFilt,onChange:setQuarterFilt,options:['All',...QUARTERS]}),
+              React.createElement('div',{className:'col-span-2 md:col-span-1 flex gap-2'},
+                React.createElement('button',{onClick:()=>exportCSV(filtered.map(minimalRow())),className:'flex-1 inline-flex items-center justify-center gap-2 px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100'},
+                  React.createElement(Download,{className:'w-4 h-4'}),'Export CSV'
+                ),
+                React.createElement('button',{onClick:()=>{setQ('');setStateFilt('All');setSectorFilt('All');setPollutantFilt('All');setStatusFilt('Issues');setQuarterFilt('All');},className:'px-3 py-2 rounded-xl border border-slate-200 bg-white hover:bg-slate-100'},'Reset')
+              )
+            ),
+            view==='Dashboard' && React.createElement(DashboardView,{kpis,timeSeries,byPollutant,byState,filtered,onSelect:setSelected,persona}),
+            view==='Facilities' && React.createElement(FacilitiesView,{rows:filtered,onSelect:setSelected}),
+            view==='Vendors' && React.createElement(VendorsView,{rows:filtered}),
+            view==='Scoring' && React.createElement(ScoringView,{weights,setWeights}),
+            view==='Pricing' && React.createElement(PricingView,null),
+            view==='Pilot' && React.createElement(PilotView,null),
+            view==='Outreach' && React.createElement(OutreachView,null),
+            view==='Methodology' && React.createElement(MethodologyView,null),
+            selected && React.createElement(DetailDrawer,{facility:selected,onClose:()=>setSelected(null)})
+          ),
+          React.createElement('footer',{className:'py-6 text-center text-xs text-slate-500'},'Demo data only. For pilots, replace with live NPDES + state portal ingest. Neutrality and disclosure rules apply.')
+        );
+      }
+
+      const root = createRoot(document.getElementById('root'));
+      root.render(React.createElement(PermitWatchApp));
+    </script>
+  </body>
+</html>
